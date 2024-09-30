@@ -1,0 +1,67 @@
+#!pip install langchain
+#!pip install streamlit
+#!pip install PyPDF2
+#!pip install langchain-openai
+#pip install langchain-community
+#pip install faiss-cpu
+
+import os #파이썬의 표준 라이브러리인 os 모듈을 임포트
+from PyPDF2 import PdfReader #PyPDF 라이브러리에서 PdfReader 클래스 갖고옴:pdf 파일 읽고 텍스트 추출
+import streamlit as st #streamlit 라이브러리 전체를 st라는 별칭으로 갖고옴:streamlit으로 웹애플리케이션 만들기
+from langchain.text_splitter import CharacterTextSplitter #랭체인 라이브러리의 text_splitter 모듈에 있는 CharacterTextSplitter 클래스 임포트:텍스트를 청크로 분할
+from langchain_openai import OpenAIEmbeddings #랭체인 라이브러리의 openai 모듈에 있는 OpenAIEmbeddings 클래스 임포트 : openai의 임베딩 모델을 사용해서 텍스트를 벡터화 
+from langchain import FAISS #FAISS라이브러리 임포트:FAISS 벡터 저장소를 사용해 임베딩된 텍스트를 저장하고 검색하는 기능 제공
+from langchain.chains.question_answering import load_qa_chain #질문-답변 체인을 로드하는 함수 : langchain 라이브러리에 chains 패키지에 question_answering 모듈 안에 존재하는 load_qa_chain 함수 임포트
+from langchain.chat_models import ChatOpenAI # ChatOpenAI의 GPT모델을 사용하여 자연어 처리하는 클래스 :chat_models 모듈의 ChatOpenAI 클래스 임포트
+from langchain.callbacks import get_openai_callback # openai api 호출 비용을 추적하는 콜백함수
+api_key="sk-(본인의 Key값)"
+
+def process_text(text): #def 키워드를 사용해서 process_text() 함수 정의
+#CharacterTextSplitter를 사용하여 텍스트를 청크로 분할
+    text_splitter = CharacterTextSplitter( #CharacterTextSplitter 클래스의 객체를 세팅값과 함께 생성하여, text_splitter 변수에 저장
+        separator="\n", # 청크 나누는 기준
+        chunk_size=1000, # 각 청크의 최대 길이
+        chunk_overlap=200, # 각 청크 간의 중복 허용 길이 : 문맥을 유지하기 위함
+        length_function=len # 청크 길이 계산시 len() 함수 사용 지정
+    )
+    
+    chunks = text_splitter.split_text(text) # 앞에서 생성한 CharacterTextSplitter 클래스의 객체인 text_splitter 인스턴스의 split_text 메소드를 사용해서 인수로 받은 text 청크로 분할하여 chunks 변수에 저장(리스트타입)
+# 예시 
+# text = "This is a long document that will be split into smaller pieces."
+# 청크로 분할된 텍스트
+# chunks = ["This is a long document", "that will be split", "into smaller pieces."]
+
+    # 임베딩 처리(벡터 변환), OpenAI의 text-embedding-ada-002 모델을 사용    
+    embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=api_key) # 임베딩 모델을 설정, OpenAIEmbeddings 클래스의 인스턴스를 생성해서 embeddings 변수에 저장    
+    documents = FAISS.from_texts(chunks, embeddings) # 이미 설정된 embeddings 인스턴스를 활용해 분할된 텍스트 청크(chrunks)를 임베딩(벡터)로 변환하고 FAISS라는 벡터 검색 엔진에 저장 
+    return documents # FAISS 인덱스를 반환
+
+def main():  #streamlit을 이용한 웹사이트 생성
+    st.title("📄PDF 요약하기") #Streamlit 웹 페이지에 제목을 표시
+    st.divider() # 구분선 추가
+
+    pdf = st.file_uploader('PDF파일을 업로드해주세요', type='pdf') #streamlit 라이브러리의 파일 업로드 위젯을 생성하는 메서드
+
+    if pdf is not None: # 전체 코드가 실행된 후 페이지가 렌더링되고, 사용자가 파일을 업로드 할 때마다 전체 코드가 다시 실행됨
+        pdf_reader = PdfReader(pdf) # PyPDF2의 PdfReader를 사용하여 PDF 파일 읽을 PdfReader 객체 생성
+        text = ""   # 추출한 텍스트를 저장할 빈 문자열 초기화
+        for page in pdf_reader.pages: # page가 pdf_reader.pages의 각 항목을 하나씩 순회
+            text += page.extract_text() # 각 페이지에서 텍스트를 추출하여 text변수에 추가, extract_text():PageObject에서 텍스트를 추출하는 메소드
+
+        documents = process_text(text) # process_text() : #process_text():위에 생성한 함수 실행하고, documents 변수에는 FAISS 인덱스 객체가 저장 
+        query = "업로드된 PDF 파일의 내용을 약 3~5문장으로 요약해주세요." 
+
+        if query: # query가 존재할 경우 실행, 위에서 query를 작성했으니 무조건 실행됨
+            docs = documents.similarity_search(query) # similarity_search() : 주어진 쿼리와 가장 유사한 문서들을 검색하는 메서드
+            llm = ChatOpenAI(model="gpt-3.5-turbo-16k", api_key=api_key, temperature=0.1) # LLM 객체 생성
+            chain = load_qa_chain(llm, chain_type='stuff') # load_qa_chain() : LangChain의 질문-답변 체인을 불러오는 함수
+
+            with get_openai_callback() as cost: # OpenAI API 호출 비용 추적하기 위한 콜백 함수
+                response = chain.run(input_documents=docs, question=query) # LLM 체인을 실행하여 입력문서들(docs)을 기반으로 질문(query)에 대한 답변(요약)을 생성
+                print(cost) # API 호출 비용을 콘솔에 출력
+
+            st.subheader('--요약 결과--:')
+            st.write(response)
+
+if __name__ == '__main__': # 파이썬 스크립트가 직접 실행될 때 메인 함수를 호출하는 구문
+    main() 
