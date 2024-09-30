@@ -1,0 +1,51 @@
+# 1. 라이브러리 설치
+
+#!pip install langchain
+#!pip install streamlit
+#!pip install PyPDF2
+#!pip install langchain-openai
+
+
+#----------------------------------------------
+# 2. 설치한 라이브러리 갖고 오기
+
+import streamlit as st
+from PyPDF2 import PdfReader
+from langchain_openai import OpenAIEmbeddings
+from langchain.chat_models import ChatOpenAI
+from langchain.chains import ConversationalRetrievalChain, RetrievalQA
+from langchain.memory import ConversationBufferWindowMemory
+from langchain.vectorstores import FAISS
+from langchain.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+api_key="sk-(본인의 Key값)"
+
+
+#----------------------------------------------
+# 3. PDF 문서에서 텍스트를 추출하는 함수 만들기
+
+def get_pdf_text(pdf_docs) : 
+    text = ""  # 추출한 텍스트를 저장할 빈 문자열 생성
+    for pdf in pdf_docs: # pdf가 pdf_docs(리스트 형태)의 각 항목을 하나씩 순회
+        pdf_reader = PdfReader(pdf) # pdf 파일을 읽어서 pdf_reader 객체에 저장
+        for page in pdf_reader.pages: # pdf_reader의 각 페이지를 순회
+            text += page.extract_text() # 각 페이지에서 텍스트를 추출하여 text 변수에 누적(=pdf 파일의 모든 페이지에서 텍스트를 추출하여 하나의 문자열로 만들기)
+    return text  # 모든 PDF 파일에서 추출한 텍스트를 반환
+
+
+#----------------------------------------------
+# 4. 지정된 조건에 따라 주어진 텍스트를 더 작은 덩어리로 분할
+def get_text_chunks(text):
+    text_splitter=RecursiveCharacterTextSplitter( # RecursiveCharacterTextSplitter : 텍스트를 작은 청크로 분할
+        separators="\\n", # 텍스트를 줄바꿈 문자를 기준으로 분할
+        chunk_size=1000, # 각 청크의 최대 길이를 1000자로 설정
+        chunk_overlap=200, # 청크 간에 200자 중복을 허용하여 문맥 유지
+        length_function=len # 청크의 길이를 계산하는 함수로 len()을 선택
+    )
+    chunks = text_splitter.split_text(text) # split_text(text) : 텍스트를 청크로 분할하는 메서드 
+    return chunks # chunks는 분할된 텍스트의 리스트
+
+
+
+
