@@ -1,0 +1,95 @@
+1. 라이브러리 설치
+
+#!pip install langchain
+#!pip install streamlit
+#!pip install PyPDF2
+#!pip install langchain-openai
+
+
+2. 설치한 라이브러리 갖고오기
+
+import streamlit as st
+from PyPDF2 import PdfReader
+from langchain_openai import OpenAIEmbeddings
+from langchain.chat_models import ChatOpenAI
+from langchain.chains import ConversationalRetrievalChain, RetrievalQA
+from langchain.memory import ConversationBufferWindowMemory
+from langchain.vectorstores import FAISS
+from langchain.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+api_key="sk-"
+
+
+3. PDF 문서에서 텍스트를 추출하는 함수 만들기
+
+def get_pdf_text(pdf_docs): 
+    text = ""  # 추출한 텍스트를 저장할 빈 문자열 생성
+    for pdf in pdf_docs: # pdf가 pdf_docs(리스트 형태)의 각 항목을 하나씩 순회
+        pdf_reader = PdfReader(pdf) # pdf 파일을 읽어서 pdf_reader 객체에 저장
+        for page in pdf_reader.pages: # pdf_reader의 각 페이지를 순회
+            text += page.extract_text() # 각 페이지에서 텍스트를 추출하여 text 변수에 누적(=pdf 파일의 모든 페이지에서 텍스트를 추출하여 하나의 문자열로 만들기)
+    return text  # 모든 PDF 파일에서 추출한 텍스트를 반환
+
+
+4. 지정된 조건에 따라 주어진 텍스트를 더 작은 덩어리로 분할
+
+def get_text_chunks(text):
+    text_splitter=RecursiveCharacterTextSplitter( # RecursiveCharacterTextSplitter : 텍스트를 작은 청크로 분할
+        separators="\\n", # 텍스트를 줄바꿈 문자를 기준으로 분할
+        chunk_size=1000, # 각 청크의 최대 길이를 1000자로 설정
+        chunk_overlap=200, # 청크 간에 200자 중복을 허용하여 문맥 유지
+        length_function=len # 청크의 길이를 계산하는 함수로 len()을 선택
+    )
+    chunks = text_splitter.split_text(text) # split_text(text) : 텍스트를 청크로 분할하는 메서드 
+    return chunks # chunks는 분할된 텍스트의 리스트
+
+
+5. 주어진 텍스트 청크에 대한 임베딩을 생성하고 FAISS를 사용하여 벡터 저장소를 생성
+
+def get_vectorstore(text_chunks):
+    embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=api_key) # 임베딩 모델 선택, API 설정
+    vectorstore = FAISS.from_texts(texts=text_chunks, embeddings) # 텍스트 리스트(text_chunks)를 받아서 각 텍스트를 임베딩하고 FAISS 에 저장
+    return vectorstore # FAISS 벡터 저장소를 반환
+
+
+6. 주어진 벡터 저장소로 대화 체인을 초기화
+
+def get_conversation_chain(vectorstore):
+    memory = ConversationBufferWindowMemory(memory_key='chat_history', return_message=true)
+    conversation_chain = ConversationalRetrievalChain.from_llm(
+    llm=ChatOpenAI(temperature=0, model_name='gpt-4o', api_key=api_key),
+    retriever=vectorstore.as_retriever(),
+    get_char_history=lambda h: h,
+    memory=memory
+    )
+    # ConversationalRetrievalChain을 통해 Langchain 챗봇에 쿼리 전송
+    return conversation_chain
+
+
+7. PDF 파일을 업로드할 수 있는 버튼 생성 + 업로드 된 PDF 파일을 앞에서 정의해둔 함수(get_text_chunks)를 호출하여 처리
+
+user_uploads = st.file_uploader("파일을 업로드 해주세요!", accept_multiple_files=True)
+if user_uploads is not None: # 파일이 업로드 되었다면 
+    if st.button("Upload"): # upload라는 텍스트를 가진 버튼 제공
+        with st.spinner("처리 중..."): # 이 블록 안의 코드가 실행되는 동안 스피너 표시
+            raw_text = get_pdf_text(user_uploads) # 위에서 만든 함수, PDF 문서에서 텍스트 추출
+            text_chunks = get_text_chunks(raw_text) # 텍스트에서 청크 검색
+            vectorstore = get_vectorstore(text_chunks) # PDF 텍스트 저장을 위해 FAISS 벡터 저장소 만들기
+            st.session_state.conversation = get_conversation_chain(vectorstore) # 대화 체인 만들기
+
+
+8. 대화 체인을 사용하여 사용자의 메시지를 처리
+
+if user_query := st.chat_input("질문을 입력해주세요~"):
+    # 대화 체인을 사용하여 사용자의 메시지를 처리
+    if 'conversation' in st.session_state: # 세션 상태에 'conversation'이 존재하는지 확인
+        result = st.session_state.conversation({
+            "question": user_query, 
+            "chat_history": st.session_state.get('chat_history', [])
+        })
+        response = result["answer"]
+    else:
+        response = "먼저 문서를 업로드해주세요~."
+    with st.chat_message("assistant"):
+        st.write(response)
